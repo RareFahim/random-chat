@@ -36,7 +36,7 @@ let isSearching = false;
 
 
 /* =========================================
-   SUPABASE REQUEST
+   SUPABASE REST API
 ========================================= */
 
 async function api(path, options = {}) {
@@ -52,9 +52,6 @@ async function api(path, options = {}) {
                 "Content-Type": "application/json",
                 "Accept": "application/json",
 
-                /*
-                  Tell PostgREST to return inserted rows.
-                */
                 "Prefer": "return=representation",
 
                 ...(options.headers || {})
@@ -82,7 +79,7 @@ async function api(path, options = {}) {
                 text;
 
         } catch (error) {
-            // Keep original response
+            // Keep original message
         }
 
 
@@ -106,6 +103,67 @@ async function api(path, options = {}) {
 
 
 /* =========================================
+   RPC CALL
+========================================= */
+
+async function findOrCreateChat() {
+
+    const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/rpc/find_or_create_chat`,
+        {
+            method: "POST",
+
+            headers: {
+                "apikey": SUPABASE_KEY,
+                "Authorization": `Bearer ${SUPABASE_KEY}`,
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            },
+
+            body: JSON.stringify({
+                p_user_id: userId
+            })
+        }
+    );
+
+
+    const text = await response.text();
+
+
+    if (!response.ok) {
+
+        let message = text;
+
+        try {
+
+            const data = JSON.parse(text);
+
+            message =
+                data.message ||
+                data.details ||
+                data.hint ||
+                data.error ||
+                text;
+
+        } catch (error) {}
+
+
+        throw new Error(
+            `Supabase ${response.status}: ${message}`
+        );
+    }
+
+
+    if (!text) {
+        return null;
+    }
+
+
+    return JSON.parse(text);
+}
+
+
+/* =========================================
    SCREEN MANAGEMENT
 ========================================= */
 
@@ -117,13 +175,12 @@ function showScreen(screen) {
 
     chatScreen.classList.add("hidden");
 
-
     screen.classList.remove("hidden");
 }
 
 
 /* =========================================
-   START RANDOM CHAT
+   START SEARCH
 ========================================= */
 
 async function startSearching() {
@@ -142,8 +199,8 @@ async function startSearching() {
     try {
 
         /*
-          Remove an old waiting entry belonging
-          to this browser.
+          Remove an old waiting entry
+          for this user.
         */
 
         await api(
@@ -155,7 +212,7 @@ async function startSearching() {
 
 
         /*
-          Add this user to the waiting queue.
+          Put this user into the queue.
         */
 
         await api(
@@ -170,32 +227,26 @@ async function startSearching() {
         );
 
 
-        console.log(
-            "Waiting for a stranger...",
-            userId
-        );
+        /*
+          Try to find a stranger.
+        */
+
+        await checkForMatch();
 
 
         /*
-          Check for another user every 2 seconds.
+          Keep checking until matched.
         */
 
         searchTimer = setInterval(
-            findStranger,
+            checkForMatch,
             2000
         );
-
-
-        /*
-          Check immediately too.
-        */
-
-        await findStranger();
 
     } catch (error) {
 
         console.error(
-            "Start chat error:",
+            "Search error:",
             error
         );
 
@@ -215,10 +266,10 @@ async function startSearching() {
 
 
 /* =========================================
-   FIND STRANGER
+   CHECK FOR MATCH
 ========================================= */
 
-async function findStranger() {
+async function checkForMatch() {
 
     if (!isSearching) {
         return;
@@ -227,160 +278,67 @@ async function findStranger() {
 
     try {
 
-        /*
-          Get the oldest person waiting.
-
-          We specifically request user_id
-          and only accept a valid value.
-        */
-
-        const users = await api(
-            `waiting_users?select=id,user_id,created_at&user_id=neq.${userId}&order=created_at.asc&limit=1`
-        );
+        const result =
+            await findOrCreateChat();
 
 
         console.log(
-            "People waiting:",
-            users
+            "Match result:",
+            result
         );
 
 
         /*
-          Nobody else is waiting.
-
-          This is NORMAL.
+          RPC returns an array because
+          the function returns TABLE.
         */
 
-        if (!users || users.length === 0) {
-
-            console.log(
-                "No stranger available yet."
-            );
+        if (
+            !result ||
+            !Array.isArray(result) ||
+            result.length === 0
+        ) {
 
             return;
         }
 
 
-        const stranger = users[0];
+        const match = result[0];
 
 
         /*
-          IMPORTANT:
-          Never continue if user_id is missing.
+          No stranger yet.
+
+          The RPC deliberately returns NULL
+          when nobody is waiting.
         */
 
         if (
-            !stranger ||
-            !stranger.id ||
-            !stranger.user_id
+            !match ||
+            !match.room_id ||
+            !match.stranger_id
         ) {
-
-            console.log(
-                "Skipping invalid waiting user:",
-                stranger
-            );
 
             return;
         }
 
 
-        console.log(
-            "Found stranger:",
-            stranger.user_id
-        );
-
-
         /*
-          Create the chat room.
-
-          The database automatically generates
-          chat_rooms.id using gen_random_uuid().
+          MATCH FOUND!
         */
 
-        const rooms = await api(
-            "chat_rooms",
-            {
-                method: "POST",
-
-                body: JSON.stringify({
-                    user1_id: userId,
-                    user2_id: stranger.user_id
-                })
-            }
-        );
+        currentRoomId =
+            match.room_id;
 
 
         console.log(
-            "Room response:",
-            rooms
-        );
-
-
-        /*
-          Make sure Supabase returned a room
-          AND that the room has an ID.
-        */
-
-        if (
-            !rooms ||
-            rooms.length === 0 ||
-            !rooms[0] ||
-            !rooms[0].id
-        ) {
-
-            throw new Error(
-                "Supabase created no usable chat room ID."
-            );
-        }
-
-
-        /*
-          Save room ID.
-        */
-
-        currentRoomId = rooms[0].id;
-
-
-        console.log(
-            "Chat room ID:",
+            "Matched!",
             currentRoomId
         );
 
 
-        /*
-          Remove the stranger from waiting queue.
-        */
-
-        await api(
-            `waiting_users?id=eq.${stranger.id}`,
-            {
-                method: "DELETE"
-            }
-        );
-
-
-        /*
-          Remove ourselves from waiting queue.
-        */
-
-        await api(
-            `waiting_users?user_id=eq.${userId}`,
-            {
-                method: "DELETE"
-            }
-        );
-
-
-        /*
-          Stop searching.
-        */
-
         stopSearching();
 
-
-        /*
-          Open chat.
-        */
 
         openChat();
 
@@ -445,9 +403,11 @@ async function openChat() {
 
 
     /*
-      Start checking for new messages.
-      We will later replace this polling
-      with Supabase Realtime.
+      Temporary message polling.
+
+      We will replace this with true
+      Supabase Realtime after the matching
+      system is confirmed working.
     */
 
     startMessagePolling();
@@ -475,45 +435,17 @@ async function loadMessages() {
         );
 
 
-        /*
-          Don't erase the current messages
-          if the request returns nothing.
-        */
-
         if (!messages) {
             return;
         }
 
 
-        messagesBox.innerHTML = "";
-
-
-        if (messages.length === 0) {
-
-            messagesBox.innerHTML = `
-                <div class="welcome">
-                    You are now connected with a stranger.<br>
-                    Say hello 👋
-                </div>
-            `;
-
-            return;
-        }
-
-
-        messages.forEach(message => {
-
-            addMessage(
-                message.message,
-                message.sender_id === userId
-            );
-
-        });
+        renderMessages(messages);
 
     } catch (error) {
 
         console.error(
-            "Load messages error:",
+            "Message loading error:",
             error
         );
     }
@@ -530,51 +462,11 @@ function startMessagePolling() {
 
 
     messageTimer = setInterval(
-        async () => {
-
-            if (!currentRoomId) {
-                return;
-            }
-
-
-            try {
-
-                const messages = await api(
-                    `messages?select=id,room_id,sender_id,message,created_at&room_id=eq.${currentRoomId}&order=created_at.asc`
-                );
-
-
-                if (!messages) {
-                    return;
-                }
-
-
-                /*
-                  Redraw messages.
-
-                  This is temporary.
-                  Later we'll use Supabase Realtime.
-                */
-
-                renderMessages(messages);
-
-            } catch (error) {
-
-                console.error(
-                    "Message polling error:",
-                    error
-                );
-            }
-
-        },
+        loadMessages,
         1500
     );
 }
 
-
-/* =========================================
-   STOP MESSAGE POLLING
-========================================= */
 
 function stopMessagePolling() {
 
@@ -661,16 +553,8 @@ async function sendMessage() {
         );
 
 
-        /*
-          Clear input.
-        */
-
         messageInput.value = "";
 
-
-        /*
-          Immediately reload messages.
-        */
 
         await loadMessages();
 
@@ -694,7 +578,7 @@ async function sendMessage() {
 
 
 /* =========================================
-   DISPLAY ONE MESSAGE
+   DISPLAY MESSAGE
 ========================================= */
 
 function addMessage(text, mine) {
@@ -715,8 +599,7 @@ function addMessage(text, mine) {
 
 
     /*
-      textContent is used instead of innerHTML
-      to prevent users from injecting HTML.
+      textContent prevents HTML injection.
     */
 
     bubble.textContent = text;
@@ -765,7 +648,7 @@ async function cancelSearch() {
 
 
 /* =========================================
-   LEAVE CHAT
+   DISCONNECT
 ========================================= */
 
 async function disconnect() {
@@ -774,10 +657,6 @@ async function disconnect() {
 
     stopMessagePolling();
 
-
-    /*
-      Remove ourselves from waiting queue.
-    */
 
     try {
 
@@ -790,7 +669,10 @@ async function disconnect() {
 
     } catch (error) {
 
-        console.error(error);
+        console.error(
+            "Disconnect error:",
+            error
+        );
     }
 
 
@@ -811,15 +693,12 @@ async function nextStranger() {
 
 
     /*
-      Generate a completely new anonymous ID.
+      Generate a new anonymous identity.
     */
 
-    userId = crypto.randomUUID();
+    userId =
+        crypto.randomUUID();
 
-
-    /*
-      Start searching again.
-    */
 
     await startSearching();
 }
