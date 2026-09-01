@@ -16,6 +16,7 @@ const messagesBox = document.getElementById("messages");
 let userId = crypto.randomUUID();
 let currentRoomId = null;
 let searchTimer = null;
+let realtimeChannel = null;
 let isSearching = false;
 
 
@@ -35,46 +36,40 @@ async function api(path, options = {}) {
         "Authorization": `Bearer ${SUPABASE_KEY}`,
         "Content-Type": "application/json",
         "Accept": "application/json",
+        "Prefer": "return=representation",
         ...(options.headers || {})
       }
     }
   );
 
-  const responseText = await response.text();
+  const text = await response.text();
 
   if (!response.ok) {
 
-    let errorMessage = responseText;
+    let message = text;
 
     try {
-      const errorData = JSON.parse(responseText);
+      const data = JSON.parse(text);
 
-      errorMessage =
-        errorData.message ||
-        errorData.error_description ||
-        errorData.details ||
-        errorData.hint ||
-        responseText;
+      message =
+        data.message ||
+        data.details ||
+        data.hint ||
+        text;
 
-    } catch (e) {
-      // Keep original response
-    }
+    } catch (error) {}
 
     throw new Error(
-      `Supabase error ${response.status}: ${errorMessage}`
+      `Supabase ${response.status}: ${message}`
     );
   }
 
-  if (!responseText) {
-    return null;
-  }
-
-  return JSON.parse(responseText);
+  return text ? JSON.parse(text) : null;
 }
 
 
 /* =========================
-   SCREEN MANAGEMENT
+   SCREEN
 ========================= */
 
 function showScreen(screen) {
@@ -103,12 +98,9 @@ async function startSearching() {
 
   try {
 
-    console.log("Starting search...");
-    console.log("User ID:", userId);
-
     /*
-      Remove any old waiting entry
-      belonging to this browser.
+      Make sure this browser doesn't
+      already have an old waiting entry.
     */
 
     await api(
@@ -118,11 +110,12 @@ async function startSearching() {
       }
     );
 
+
     /*
-      Add this user to waiting_users.
+      Add ourselves to waiting queue.
     */
 
-    const waitingUser = await api(
+    await api(
       "waiting_users",
       {
         method: "POST",
@@ -133,13 +126,13 @@ async function startSearching() {
       }
     );
 
-    console.log("Added to waiting list:", waitingUser);
 
     /*
-      Start checking for another user.
+      Check for another person.
     */
 
-    searchTimer = setInterval(findStranger, 2500);
+    searchTimer =
+      setInterval(findStranger, 2000);
 
     await findStranger();
 
@@ -151,7 +144,7 @@ async function startSearching() {
 
     clearInterval(searchTimer);
 
-    showError(
+    alert(
       "Could not start chat.\n\n" +
       error.message
     );
@@ -173,50 +166,74 @@ async function findStranger() {
 
   try {
 
-    console.log("Looking for stranger...");
+    /*
+      Find the oldest person waiting
+      who is NOT ourselves.
+    */
 
     const users = await api(
       `waiting_users?select=id,user_id,created_at&user_id=neq.${userId}&order=created_at.asc&limit=1`
     );
 
-    console.log("Waiting users:", users);
 
     if (!users || users.length === 0) {
       return;
     }
 
+
     const stranger = users[0];
 
-    console.log("Stranger found:", stranger);
 
     /*
-      Create chat room.
+      Before creating a room, check whether
+      a room already exists between these users.
     */
 
-    const rooms = await api(
-      "chat_rooms",
-      {
-        method: "POST",
-
-        body: JSON.stringify({
-          user1_id: userId,
-          user2_id: stranger.user_id
-        })
-      }
+    const existingRooms = await api(
+      `chat_rooms?select=id,user1_id,user2_id&or=(and(user1_id.eq.${userId},user2_id.eq.${stranger.user_id}),and(user1_id.eq.${stranger.user_id},user2_id.eq.${userId}))&limit=1`
     );
 
-    console.log("Chat room:", rooms);
 
-    if (!rooms || rooms.length === 0) {
-      throw new Error("Chat room was not created.");
+    let room;
+
+
+    if (existingRooms && existingRooms.length > 0) {
+
+      room = existingRooms[0];
+
+    } else {
+
+      /*
+        Create a new room.
+      */
+
+      const rooms = await api(
+        "chat_rooms",
+        {
+          method: "POST",
+
+          body: JSON.stringify({
+            user1_id: userId,
+            user2_id: stranger.user_id
+          })
+        }
+      );
+
+      if (!rooms || rooms.length === 0) {
+        throw new Error(
+          "Chat room was not created."
+        );
+      }
+
+      room = rooms[0];
     }
 
-    const room = rooms[0];
 
     currentRoomId = room.id;
 
+
     /*
-      Remove both users from waiting list.
+      Remove both users from waiting queue.
     */
 
     await api(
@@ -233,6 +250,7 @@ async function findStranger() {
       }
     );
 
+
     clearInterval(searchTimer);
 
     isSearching = false;
@@ -241,13 +259,16 @@ async function findStranger() {
 
   } catch (error) {
 
-    console.error("Matching error:", error);
-
-    isSearching = false;
+    console.error(
+      "Matching error:",
+      error
+    );
 
     clearInterval(searchTimer);
 
-    showError(
+    isSearching = false;
+
+    alert(
       "Matching failed.\n\n" +
       error.message
     );
@@ -261,7 +282,7 @@ async function findStranger() {
    OPEN CHAT
 ========================= */
 
-function openChat() {
+async function openChat() {
 
   messagesBox.innerHTML = `
     <div class="welcome">
@@ -272,7 +293,77 @@ function openChat() {
 
   showScreen(chatScreen);
 
+  await loadMessages();
+
+  subscribeToMessages();
+
   messageInput.focus();
+}
+
+
+/* =========================
+   LOAD OLD MESSAGES
+========================= */
+
+async function loadMessages() {
+
+  if (!currentRoomId) {
+    return;
+  }
+
+  try {
+
+    const messages = await api(
+      `messages?select=id,room_id,sender_id,message,created_at&room_id=eq.${currentRoomId}&order=created_at.asc`
+    );
+
+    messagesBox.innerHTML = "";
+
+    if (!messages || messages.length === 0) {
+
+      messagesBox.innerHTML = `
+        <div class="welcome">
+          You are now connected with a stranger.<br>
+          Say hello 👋
+        </div>
+      `;
+
+      return;
+    }
+
+    messages.forEach(message => {
+
+      addMessage(
+        message.message,
+        message.sender_id === userId
+      );
+
+    });
+
+  } catch (error) {
+
+    console.error(
+      "Load messages error:",
+      error
+    );
+  }
+}
+
+
+/* =========================
+   REALTIME MESSAGES
+========================= */
+
+function subscribeToMessages() {
+
+  /*
+    The Supabase Realtime JavaScript client
+    will be added in the next step.
+
+    For now, messages are saved correctly
+    and can be loaded from the database.
+  */
+
 }
 
 
@@ -282,20 +373,23 @@ function openChat() {
 
 async function sendMessage() {
 
-  const text = messageInput.value.trim();
+  const text =
+    messageInput.value.trim();
 
   if (!text) {
     return;
   }
 
   if (!currentRoomId) {
-    showError("There is no active chat.");
+
+    alert("There is no active chat.");
+
     return;
   }
 
   try {
 
-    await api(
+    const result = await api(
       "messages",
       {
         method: "POST",
@@ -308,6 +402,11 @@ async function sendMessage() {
       }
     );
 
+
+    /*
+      Display our own message immediately.
+    */
+
     addMessage(text, true);
 
     messageInput.value = "";
@@ -316,9 +415,9 @@ async function sendMessage() {
 
   } catch (error) {
 
-    console.error("Message error:", error);
+    console.error(error);
 
-    showError(
+    alert(
       "Message could not be sent.\n\n" +
       error.message
     );
@@ -339,26 +438,26 @@ function addMessage(text, mine) {
     welcome.remove();
   }
 
+
   const wrapper =
     document.createElement("div");
 
   wrapper.className =
     `message ${mine ? "mine" : ""}`;
 
+
   const bubble =
     document.createElement("div");
 
   bubble.className = "bubble";
 
-  /*
-    textContent prevents HTML injection.
-  */
-
   bubble.textContent = text;
+
 
   wrapper.appendChild(bubble);
 
   messagesBox.appendChild(wrapper);
+
 
   messagesBox.scrollTop =
     messagesBox.scrollHeight;
@@ -386,10 +485,8 @@ async function cancelSearch() {
 
   } catch (error) {
 
-    console.error(
-      "Could not remove waiting user:",
-      error
-    );
+    console.error(error);
+
   }
 
   showScreen(homeScreen);
@@ -406,24 +503,8 @@ async function disconnect() {
 
   isSearching = false;
 
-  if (currentRoomId) {
-
-    try {
-
-      await api(
-        `chat_rooms?id=eq.${currentRoomId}`,
-        {
-          method: "DELETE"
-        }
-      );
-
-    } catch (error) {
-
-      console.error(
-        "Could not delete room:",
-        error
-      );
-    }
+  if (realtimeChannel) {
+    realtimeChannel = null;
   }
 
   currentRoomId = null;
@@ -433,7 +514,7 @@ async function disconnect() {
 
 
 /* =========================
-   NEXT STRANGER
+   NEXT
 ========================= */
 
 async function nextStranger() {
@@ -442,7 +523,7 @@ async function nextStranger() {
 
   userId = crypto.randomUUID();
 
-  startSearching();
+  await startSearching();
 }
 
 
@@ -453,18 +534,8 @@ async function nextStranger() {
 function reportStranger() {
 
   alert(
-    "Report system will be connected to the database in a later step."
+    "Report system will be connected soon."
   );
-}
-
-
-/* =========================
-   ERROR DISPLAY
-========================= */
-
-function showError(message) {
-
-  alert(message);
 }
 
 
