@@ -1,6 +1,11 @@
 const SUPABASE_URL = "https://wvwuvpgcdydtdivwitog.supabase.co";
 const SUPABASE_KEY = "sb_publishable_ok3gIUiVSKNk_xE28hl5ug_nUkKQ7Sv";
 
+
+/* =========================================
+   ELEMENTS
+========================================= */
+
 const homeScreen = document.getElementById("homeScreen");
 const searchingScreen = document.getElementById("searchingScreen");
 const chatScreen = document.getElementById("chatScreen");
@@ -9,579 +14,876 @@ const startBtn = document.getElementById("startBtn");
 const cancelSearchBtn = document.getElementById("cancelSearchBtn");
 const nextBtn = document.getElementById("nextBtn");
 const reportBtn = document.getElementById("reportBtn");
+
 const sendBtn = document.getElementById("sendBtn");
 const messageInput = document.getElementById("messageInput");
 const messagesBox = document.getElementById("messages");
 
+
+/* =========================================
+   USER STATE
+========================================= */
+
 let userId = crypto.randomUUID();
+
 let currentRoomId = null;
+
 let searchTimer = null;
-let realtimeChannel = null;
+
+let messageTimer = null;
+
 let isSearching = false;
 
 
-/* =========================
-   SUPABASE API
-========================= */
+/* =========================================
+   SUPABASE REQUEST
+========================================= */
 
 async function api(path, options = {}) {
 
-  const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/${path}`,
-    {
-      ...options,
+    const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/${path}`,
+        {
+            ...options,
 
-      headers: {
-        "apikey": SUPABASE_KEY,
-        "Authorization": `Bearer ${SUPABASE_KEY}`,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Prefer": "return=representation",
-        ...(options.headers || {})
-      }
+            headers: {
+                "apikey": SUPABASE_KEY,
+                "Authorization": `Bearer ${SUPABASE_KEY}`,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+
+                /*
+                  Tell PostgREST to return inserted rows.
+                */
+                "Prefer": "return=representation",
+
+                ...(options.headers || {})
+            }
+        }
+    );
+
+
+    const text = await response.text();
+
+
+    if (!response.ok) {
+
+        let errorMessage = text;
+
+        try {
+
+            const data = JSON.parse(text);
+
+            errorMessage =
+                data.message ||
+                data.details ||
+                data.hint ||
+                data.error ||
+                text;
+
+        } catch (error) {
+            // Keep original response
+        }
+
+
+        throw new Error(
+            `Supabase ${response.status}: ${errorMessage}`
+        );
     }
-  );
 
-  const text = await response.text();
 
-  if (!response.ok) {
+    if (!text) {
+        return null;
+    }
 
-    let message = text;
 
     try {
-      const data = JSON.parse(text);
-
-      message =
-        data.message ||
-        data.details ||
-        data.hint ||
-        text;
-
-    } catch (error) {}
-
-    throw new Error(
-      `Supabase ${response.status}: ${message}`
-    );
-  }
-
-  return text ? JSON.parse(text) : null;
+        return JSON.parse(text);
+    } catch (error) {
+        return null;
+    }
 }
 
 
-/* =========================
-   SCREEN
-========================= */
+/* =========================================
+   SCREEN MANAGEMENT
+========================================= */
 
 function showScreen(screen) {
 
-  homeScreen.classList.add("hidden");
-  searchingScreen.classList.add("hidden");
-  chatScreen.classList.add("hidden");
+    homeScreen.classList.add("hidden");
 
-  screen.classList.remove("hidden");
+    searchingScreen.classList.add("hidden");
+
+    chatScreen.classList.add("hidden");
+
+
+    screen.classList.remove("hidden");
 }
 
 
-/* =========================
-   START SEARCH
-========================= */
+/* =========================================
+   START RANDOM CHAT
+========================================= */
 
 async function startSearching() {
 
-  if (isSearching) {
-    return;
-  }
-
-  isSearching = true;
-
-  showScreen(searchingScreen);
-
-  try {
-
-    /*
-      Make sure this browser doesn't
-      already have an old waiting entry.
-    */
-
-    await api(
-      `waiting_users?user_id=eq.${userId}`,
-      {
-        method: "DELETE"
-      }
-    );
+    if (isSearching) {
+        return;
+    }
 
 
-    /*
-      Add ourselves to waiting queue.
-    */
-
-    await api(
-      "waiting_users",
-      {
-        method: "POST",
-
-        body: JSON.stringify({
-          user_id: userId
-        })
-      }
-    );
+    isSearching = true;
 
 
-    /*
-      Check for another person.
-    */
+    showScreen(searchingScreen);
 
-    searchTimer =
-      setInterval(findStranger, 2000);
 
-    await findStranger();
+    try {
 
-  } catch (error) {
+        /*
+          Remove an old waiting entry belonging
+          to this browser.
+        */
 
-    console.error(error);
+        await api(
+            `waiting_users?user_id=eq.${userId}`,
+            {
+                method: "DELETE"
+            }
+        );
 
-    isSearching = false;
 
-    clearInterval(searchTimer);
+        /*
+          Add this user to the waiting queue.
+        */
 
-    alert(
-      "Could not start chat.\n\n" +
-      error.message
-    );
+        await api(
+            "waiting_users",
+            {
+                method: "POST",
 
-    showScreen(homeScreen);
-  }
+                body: JSON.stringify({
+                    user_id: userId
+                })
+            }
+        );
+
+
+        console.log(
+            "Waiting for a stranger...",
+            userId
+        );
+
+
+        /*
+          Check for another user every 2 seconds.
+        */
+
+        searchTimer = setInterval(
+            findStranger,
+            2000
+        );
+
+
+        /*
+          Check immediately too.
+        */
+
+        await findStranger();
+
+    } catch (error) {
+
+        console.error(
+            "Start chat error:",
+            error
+        );
+
+
+        stopSearching();
+
+
+        alert(
+            "Could not start chat.\n\n" +
+            error.message
+        );
+
+
+        showScreen(homeScreen);
+    }
 }
 
 
-/* =========================
+/* =========================================
    FIND STRANGER
-========================= */
+========================================= */
 
 async function findStranger() {
 
-  if (!isSearching) {
-    return;
-  }
-
-  try {
-
-    /*
-      Find the oldest person waiting
-      who is NOT ourselves.
-    */
-
-    const users = await api(
-      `waiting_users?select=id,user_id,created_at&user_id=neq.${userId}&order=created_at.asc&limit=1`
-    );
-
-
-    if (!users || users.length === 0) {
-      return;
+    if (!isSearching) {
+        return;
     }
 
 
-    const stranger = users[0];
+    try {
 
+        /*
+          Get the oldest person waiting.
 
-    /*
-      Before creating a room, check whether
-      a room already exists between these users.
-    */
+          We specifically request user_id
+          and only accept a valid value.
+        */
 
-    const existingRooms = await api(
-      `chat_rooms?select=id,user1_id,user2_id&or=(and(user1_id.eq.${userId},user2_id.eq.${stranger.user_id}),and(user1_id.eq.${stranger.user_id},user2_id.eq.${userId}))&limit=1`
-    );
-
-
-    let room;
-
-
-    if (existingRooms && existingRooms.length > 0) {
-
-      room = existingRooms[0];
-
-    } else {
-
-      /*
-        Create a new room.
-      */
-
-      const rooms = await api(
-        "chat_rooms",
-        {
-          method: "POST",
-
-          body: JSON.stringify({
-            user1_id: userId,
-            user2_id: stranger.user_id
-          })
-        }
-      );
-
-      if (!rooms || rooms.length === 0) {
-        throw new Error(
-          "Chat room was not created."
+        const users = await api(
+            `waiting_users?select=id,user_id,created_at&user_id=neq.${userId}&order=created_at.asc&limit=1`
         );
-      }
 
-      room = rooms[0];
+
+        console.log(
+            "People waiting:",
+            users
+        );
+
+
+        /*
+          Nobody else is waiting.
+
+          This is NORMAL.
+        */
+
+        if (!users || users.length === 0) {
+
+            console.log(
+                "No stranger available yet."
+            );
+
+            return;
+        }
+
+
+        const stranger = users[0];
+
+
+        /*
+          IMPORTANT:
+          Never continue if user_id is missing.
+        */
+
+        if (
+            !stranger ||
+            !stranger.id ||
+            !stranger.user_id
+        ) {
+
+            console.log(
+                "Skipping invalid waiting user:",
+                stranger
+            );
+
+            return;
+        }
+
+
+        console.log(
+            "Found stranger:",
+            stranger.user_id
+        );
+
+
+        /*
+          Create the chat room.
+
+          The database automatically generates
+          chat_rooms.id using gen_random_uuid().
+        */
+
+        const rooms = await api(
+            "chat_rooms",
+            {
+                method: "POST",
+
+                body: JSON.stringify({
+                    user1_id: userId,
+                    user2_id: stranger.user_id
+                })
+            }
+        );
+
+
+        console.log(
+            "Room response:",
+            rooms
+        );
+
+
+        /*
+          Make sure Supabase returned a room
+          AND that the room has an ID.
+        */
+
+        if (
+            !rooms ||
+            rooms.length === 0 ||
+            !rooms[0] ||
+            !rooms[0].id
+        ) {
+
+            throw new Error(
+                "Supabase created no usable chat room ID."
+            );
+        }
+
+
+        /*
+          Save room ID.
+        */
+
+        currentRoomId = rooms[0].id;
+
+
+        console.log(
+            "Chat room ID:",
+            currentRoomId
+        );
+
+
+        /*
+          Remove the stranger from waiting queue.
+        */
+
+        await api(
+            `waiting_users?id=eq.${stranger.id}`,
+            {
+                method: "DELETE"
+            }
+        );
+
+
+        /*
+          Remove ourselves from waiting queue.
+        */
+
+        await api(
+            `waiting_users?user_id=eq.${userId}`,
+            {
+                method: "DELETE"
+            }
+        );
+
+
+        /*
+          Stop searching.
+        */
+
+        stopSearching();
+
+
+        /*
+          Open chat.
+        */
+
+        openChat();
+
+    } catch (error) {
+
+        console.error(
+            "Matching error:",
+            error
+        );
+
+
+        stopSearching();
+
+
+        alert(
+            "Matching failed.\n\n" +
+            error.message
+        );
+
+
+        showScreen(homeScreen);
     }
-
-
-    currentRoomId = room.id;
-
-
-    /*
-      Remove both users from waiting queue.
-    */
-
-    await api(
-      `waiting_users?id=eq.${stranger.id}`,
-      {
-        method: "DELETE"
-      }
-    );
-
-    await api(
-      `waiting_users?user_id=eq.${userId}`,
-      {
-        method: "DELETE"
-      }
-    );
-
-
-    clearInterval(searchTimer);
-
-    isSearching = false;
-
-    openChat();
-
-  } catch (error) {
-
-    console.error(
-      "Matching error:",
-      error
-    );
-
-    clearInterval(searchTimer);
-
-    isSearching = false;
-
-    alert(
-      "Matching failed.\n\n" +
-      error.message
-    );
-
-    showScreen(homeScreen);
-  }
 }
 
 
-/* =========================
+/* =========================================
+   STOP SEARCHING
+========================================= */
+
+function stopSearching() {
+
+    isSearching = false;
+
+
+    if (searchTimer) {
+
+        clearInterval(searchTimer);
+
+        searchTimer = null;
+    }
+}
+
+
+/* =========================================
    OPEN CHAT
-========================= */
+========================================= */
 
 async function openChat() {
 
-  messagesBox.innerHTML = `
-    <div class="welcome">
-      You are now connected with a stranger.<br>
-      Say hello 👋
-    </div>
-  `;
-
-  showScreen(chatScreen);
-
-  await loadMessages();
-
-  subscribeToMessages();
-
-  messageInput.focus();
-}
+    showScreen(chatScreen);
 
 
-/* =========================
-   LOAD OLD MESSAGES
-========================= */
-
-async function loadMessages() {
-
-  if (!currentRoomId) {
-    return;
-  }
-
-  try {
-
-    const messages = await api(
-      `messages?select=id,room_id,sender_id,message,created_at&room_id=eq.${currentRoomId}&order=created_at.asc`
-    );
-
-    messagesBox.innerHTML = "";
-
-    if (!messages || messages.length === 0) {
-
-      messagesBox.innerHTML = `
+    messagesBox.innerHTML = `
         <div class="welcome">
-          You are now connected with a stranger.<br>
-          Say hello 👋
+            You are now connected with a stranger.<br>
+            Say hello 👋
         </div>
-      `;
-
-      return;
-    }
-
-    messages.forEach(message => {
-
-      addMessage(
-        message.message,
-        message.sender_id === userId
-      );
-
-    });
-
-  } catch (error) {
-
-    console.error(
-      "Load messages error:",
-      error
-    );
-  }
-}
+    `;
 
 
-/* =========================
-   REALTIME MESSAGES
-========================= */
-
-function subscribeToMessages() {
-
-  /*
-    The Supabase Realtime JavaScript client
-    will be added in the next step.
-
-    For now, messages are saved correctly
-    and can be loaded from the database.
-  */
-
-}
-
-
-/* =========================
-   SEND MESSAGE
-========================= */
-
-async function sendMessage() {
-
-  const text =
-    messageInput.value.trim();
-
-  if (!text) {
-    return;
-  }
-
-  if (!currentRoomId) {
-
-    alert("There is no active chat.");
-
-    return;
-  }
-
-  try {
-
-    const result = await api(
-      "messages",
-      {
-        method: "POST",
-
-        body: JSON.stringify({
-          room_id: currentRoomId,
-          sender_id: userId,
-          message: text
-        })
-      }
-    );
+    await loadMessages();
 
 
     /*
-      Display our own message immediately.
+      Start checking for new messages.
+      We will later replace this polling
+      with Supabase Realtime.
     */
 
-    addMessage(text, true);
+    startMessagePolling();
 
-    messageInput.value = "";
 
     messageInput.focus();
-
-  } catch (error) {
-
-    console.error(error);
-
-    alert(
-      "Message could not be sent.\n\n" +
-      error.message
-    );
-  }
 }
 
 
-/* =========================
-   DISPLAY MESSAGE
-========================= */
+/* =========================================
+   LOAD MESSAGES
+========================================= */
+
+async function loadMessages() {
+
+    if (!currentRoomId) {
+        return;
+    }
+
+
+    try {
+
+        const messages = await api(
+            `messages?select=id,room_id,sender_id,message,created_at&room_id=eq.${currentRoomId}&order=created_at.asc`
+        );
+
+
+        /*
+          Don't erase the current messages
+          if the request returns nothing.
+        */
+
+        if (!messages) {
+            return;
+        }
+
+
+        messagesBox.innerHTML = "";
+
+
+        if (messages.length === 0) {
+
+            messagesBox.innerHTML = `
+                <div class="welcome">
+                    You are now connected with a stranger.<br>
+                    Say hello 👋
+                </div>
+            `;
+
+            return;
+        }
+
+
+        messages.forEach(message => {
+
+            addMessage(
+                message.message,
+                message.sender_id === userId
+            );
+
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Load messages error:",
+            error
+        );
+    }
+}
+
+
+/* =========================================
+   MESSAGE POLLING
+========================================= */
+
+function startMessagePolling() {
+
+    stopMessagePolling();
+
+
+    messageTimer = setInterval(
+        async () => {
+
+            if (!currentRoomId) {
+                return;
+            }
+
+
+            try {
+
+                const messages = await api(
+                    `messages?select=id,room_id,sender_id,message,created_at&room_id=eq.${currentRoomId}&order=created_at.asc`
+                );
+
+
+                if (!messages) {
+                    return;
+                }
+
+
+                /*
+                  Redraw messages.
+
+                  This is temporary.
+                  Later we'll use Supabase Realtime.
+                */
+
+                renderMessages(messages);
+
+            } catch (error) {
+
+                console.error(
+                    "Message polling error:",
+                    error
+                );
+            }
+
+        },
+        1500
+    );
+}
+
+
+/* =========================================
+   STOP MESSAGE POLLING
+========================================= */
+
+function stopMessagePolling() {
+
+    if (messageTimer) {
+
+        clearInterval(messageTimer);
+
+        messageTimer = null;
+    }
+}
+
+
+/* =========================================
+   RENDER MESSAGES
+========================================= */
+
+function renderMessages(messages) {
+
+    messagesBox.innerHTML = "";
+
+
+    if (messages.length === 0) {
+
+        messagesBox.innerHTML = `
+            <div class="welcome">
+                You are now connected with a stranger.<br>
+                Say hello 👋
+            </div>
+        `;
+
+        return;
+    }
+
+
+    messages.forEach(message => {
+
+        addMessage(
+            message.message,
+            message.sender_id === userId
+        );
+
+    });
+}
+
+
+/* =========================================
+   SEND MESSAGE
+========================================= */
+
+async function sendMessage() {
+
+    const text =
+        messageInput.value.trim();
+
+
+    if (!text) {
+        return;
+    }
+
+
+    if (!currentRoomId) {
+
+        alert(
+            "There is no active chat."
+        );
+
+        return;
+    }
+
+
+    try {
+
+        await api(
+            "messages",
+            {
+                method: "POST",
+
+                body: JSON.stringify({
+                    room_id: currentRoomId,
+                    sender_id: userId,
+                    message: text
+                })
+            }
+        );
+
+
+        /*
+          Clear input.
+        */
+
+        messageInput.value = "";
+
+
+        /*
+          Immediately reload messages.
+        */
+
+        await loadMessages();
+
+
+        messageInput.focus();
+
+    } catch (error) {
+
+        console.error(
+            "Send message error:",
+            error
+        );
+
+
+        alert(
+            "Message could not be sent.\n\n" +
+            error.message
+        );
+    }
+}
+
+
+/* =========================================
+   DISPLAY ONE MESSAGE
+========================================= */
 
 function addMessage(text, mine) {
 
-  const welcome =
-    messagesBox.querySelector(".welcome");
-
-  if (welcome) {
-    welcome.remove();
-  }
+    const wrapper =
+        document.createElement("div");
 
 
-  const wrapper =
-    document.createElement("div");
-
-  wrapper.className =
-    `message ${mine ? "mine" : ""}`;
+    wrapper.className =
+        `message ${mine ? "mine" : ""}`;
 
 
-  const bubble =
-    document.createElement("div");
-
-  bubble.className = "bubble";
-
-  bubble.textContent = text;
+    const bubble =
+        document.createElement("div");
 
 
-  wrapper.appendChild(bubble);
-
-  messagesBox.appendChild(wrapper);
+    bubble.className = "bubble";
 
 
-  messagesBox.scrollTop =
-    messagesBox.scrollHeight;
+    /*
+      textContent is used instead of innerHTML
+      to prevent users from injecting HTML.
+    */
+
+    bubble.textContent = text;
+
+
+    wrapper.appendChild(bubble);
+
+
+    messagesBox.appendChild(wrapper);
+
+
+    messagesBox.scrollTop =
+        messagesBox.scrollHeight;
 }
 
 
-/* =========================
+/* =========================================
    CANCEL SEARCH
-========================= */
+========================================= */
 
 async function cancelSearch() {
 
-  clearInterval(searchTimer);
+    stopSearching();
 
-  isSearching = false;
 
-  try {
+    try {
 
-    await api(
-      `waiting_users?user_id=eq.${userId}`,
-      {
-        method: "DELETE"
-      }
-    );
+        await api(
+            `waiting_users?user_id=eq.${userId}`,
+            {
+                method: "DELETE"
+            }
+        );
 
-  } catch (error) {
+    } catch (error) {
 
-    console.error(error);
+        console.error(
+            "Cancel search error:",
+            error
+        );
+    }
 
-  }
 
-  showScreen(homeScreen);
+    showScreen(homeScreen);
 }
 
 
-/* =========================
-   DISCONNECT
-========================= */
+/* =========================================
+   LEAVE CHAT
+========================================= */
 
 async function disconnect() {
 
-  clearInterval(searchTimer);
+    stopSearching();
 
-  isSearching = false;
+    stopMessagePolling();
 
-  if (realtimeChannel) {
-    realtimeChannel = null;
-  }
 
-  currentRoomId = null;
+    /*
+      Remove ourselves from waiting queue.
+    */
 
-  showScreen(homeScreen);
+    try {
+
+        await api(
+            `waiting_users?user_id=eq.${userId}`,
+            {
+                method: "DELETE"
+            }
+        );
+
+    } catch (error) {
+
+        console.error(error);
+    }
+
+
+    currentRoomId = null;
+
+
+    showScreen(homeScreen);
 }
 
 
-/* =========================
-   NEXT
-========================= */
+/* =========================================
+   NEXT STRANGER
+========================================= */
 
 async function nextStranger() {
 
-  await disconnect();
+    await disconnect();
 
-  userId = crypto.randomUUID();
 
-  await startSearching();
+    /*
+      Generate a completely new anonymous ID.
+    */
+
+    userId = crypto.randomUUID();
+
+
+    /*
+      Start searching again.
+    */
+
+    await startSearching();
 }
 
 
-/* =========================
+/* =========================================
    REPORT
-========================= */
+========================================= */
 
 function reportStranger() {
 
-  alert(
-    "Report system will be connected soon."
-  );
+    alert(
+        "Report system will be added next."
+    );
 }
 
 
-/* =========================
+/* =========================================
    BUTTON EVENTS
-========================= */
+========================================= */
 
 startBtn.addEventListener(
-  "click",
-  startSearching
+    "click",
+    startSearching
 );
+
 
 cancelSearchBtn.addEventListener(
-  "click",
-  cancelSearch
+    "click",
+    cancelSearch
 );
+
 
 sendBtn.addEventListener(
-  "click",
-  sendMessage
+    "click",
+    sendMessage
 );
+
 
 nextBtn.addEventListener(
-  "click",
-  nextStranger
+    "click",
+    nextStranger
 );
+
 
 reportBtn.addEventListener(
-  "click",
-  reportStranger
+    "click",
+    reportStranger
 );
 
 
-/* =========================
+/* =========================================
    ENTER TO SEND
-========================= */
+========================================= */
 
 messageInput.addEventListener(
-  "keydown",
-  function(event) {
+    "keydown",
+    event => {
 
-    if (event.key === "Enter") {
+        if (event.key === "Enter") {
 
-      event.preventDefault();
+            event.preventDefault();
 
-      sendMessage();
+            sendMessage();
+        }
     }
-  }
 );
