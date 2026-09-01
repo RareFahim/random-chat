@@ -3,22 +3,168 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#080b14">
+
   <title>Random Chat</title>
+
+  <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
 
-  <h1>Random Chat</h1>
+<div class="app">
 
-  <p>Talk to a random stranger anonymously.</p>
+  <header class="header">
 
-  <button id="startChat">Start Chat</button>
+    <div class="logo">
+      <div class="logo-icon">💬</div>
+      <span>Random Chat</span>
+    </div>
 
-  <script>
-    document.getElementById("startChat").addEventListener("click", function() {
-      alert("Searching for a stranger...");
-    });
-  </script>
+    <div class="status">
+      <span class="status-dot"></span>
+      Online
+    </div>
+
+  </header>
+
+
+  <main class="main">
+
+    <!-- HOME -->
+
+    <section id="homeScreen" class="home">
+
+      <div class="hero-icon">
+        🌎
+      </div>
+
+      <h1>Meet Someone New</h1>
+
+      <p>
+        Talk with a random stranger from anywhere.
+        No profile. No pressure. Just conversation.
+      </p>
+
+      <button id="startBtn" class="primary-btn">
+        Start Chat →
+      </button>
+
+      <div class="features">
+
+        <div class="feature">
+          <div class="feature-icon">🎭</div>
+          <span>Anonymous</span>
+        </div>
+
+        <div class="feature">
+          <div class="feature-icon">⚡</div>
+          <span>Instant Match</span>
+        </div>
+
+        <div class="feature">
+          <div class="feature-icon">🔒</div>
+          <span>Private</span>
+        </div>
+
+      </div>
+
+    </section>
+
+
+    <!-- SEARCHING -->
+
+    <section id="searchingScreen" class="searching hidden">
+
+      <div class="loader"></div>
+
+      <h2>Finding a stranger...</h2>
+
+      <p>Looking for someone who's ready to chat.</p>
+
+      <br>
+
+      <button id="cancelSearchBtn" class="primary-btn">
+        Cancel
+      </button>
+
+    </section>
+
+
+    <!-- CHAT -->
+
+    <section id="chatScreen" class="chat hidden">
+
+      <div class="chat-top">
+
+        <div class="stranger">
+
+          <div class="avatar">
+            👤
+          </div>
+
+          <div class="stranger-info">
+            <strong>Stranger</strong>
+            <span>● Connected</span>
+          </div>
+
+        </div>
+
+
+        <div class="chat-actions">
+
+          <button id="reportBtn" class="icon-btn danger">
+            🚩
+          </button>
+
+          <button id="nextBtn" class="icon-btn">
+            Next →
+          </button>
+
+        </div>
+
+      </div>
+
+
+      <div id="messages" class="messages">
+
+        <div class="welcome">
+          You are now connected with a stranger.<br>
+          Say hello 👋
+        </div>
+
+      </div>
+
+
+      <div class="chat-input">
+
+        <input
+          id="messageInput"
+          type="text"
+          placeholder="Type a message..."
+          autocomplete="off"
+          maxlength="1000"
+        >
+
+        <button id="sendBtn" class="send-btn">
+          ➤
+        </button>
+
+      </div>
+
+    </section>
+
+  </main>
+
+
+  <footer class="footer">
+    Anonymous Random Chat
+  </footer>
+
+</div>
+
+
+<script src="script.js"></script>
 
 </body>
-</html>
+        </html>
