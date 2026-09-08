@@ -1,10 +1,12 @@
 // ============================================================
-// RANDOM CHAT - VERSION 2
+// RANDOM CHAT
+// COMPLETE MATCHING + REALTIME CHAT SYSTEM
+// DEVELOPED BY FAHIM
 // ============================================================
 
 
 // ============================================================
-// SUPABASE
+// SUPABASE CONFIGURATION
 // ============================================================
 
 const SUPABASE_URL =
@@ -22,7 +24,7 @@ const supabaseClient =
 
 
 // ============================================================
-// ELEMENTS
+// PAGE ELEMENTS
 // ============================================================
 
 const homeScreen =
@@ -61,11 +63,8 @@ const connectionStatus =
 
 
 // ============================================================
-// USER STATE
+// CREATE / GET ANONYMOUS USER ID
 // ============================================================
-
-// Store anonymous ID in browser.
-// Refreshing the page won't create a new identity.
 
 let userId =
     localStorage.getItem("randomChatUserId");
@@ -84,6 +83,10 @@ if (!userId) {
 }
 
 
+// ============================================================
+// APP STATE
+// ============================================================
+
 let currentRoomId = null;
 
 let strangerId = null;
@@ -94,11 +97,9 @@ let searchTimer = null;
 
 let realtimeChannel = null;
 
-let lastMessageCount = 0;
-
 
 // ============================================================
-// SCREEN MANAGEMENT
+// SHOW SCREEN
 // ============================================================
 
 function showScreen(screen) {
@@ -126,11 +127,13 @@ async function startSearching() {
     }
 
 
-    isSearching = true;
+    // Reset old local chat state.
 
     currentRoomId = null;
 
     strangerId = null;
+
+    isSearching = true;
 
 
     showScreen(searchingScreen);
@@ -138,26 +141,41 @@ async function startSearching() {
 
     try {
 
-        // Remove old waiting entry.
+        // ----------------------------------------------------
+        // Remove any old queue entry for this user.
+        // ----------------------------------------------------
 
         await supabaseClient
             .from("waiting_users")
             .delete()
-            .eq("user_id", userId);
+            .eq(
+                "user_id",
+                userId
+            );
 
 
-        // Add ourselves to queue.
+        // ----------------------------------------------------
+        // Add ourselves as a NEW waiting user.
+        // ----------------------------------------------------
 
-        const { error: insertError } =
+        const {
+            error
+        } =
             await supabaseClient
                 .from("waiting_users")
                 .insert({
-                    user_id: userId
+
+                    user_id: userId,
+
+                    matched_room_id: null,
+
+                    stranger_id: null
+
                 });
 
 
-        if (insertError) {
-            throw insertError;
+        if (error) {
+            throw error;
         }
 
 
@@ -166,27 +184,32 @@ async function startSearching() {
         await checkForMatch();
 
 
-        // Continue checking.
+        // Keep checking while searching.
 
-        searchTimer =
-            setInterval(
-                checkForMatch,
-                1500
-            );
+        if (isSearching) {
+
+            searchTimer =
+                setInterval(
+                    checkForMatch,
+                    1000
+                );
+
+        }
+
 
     } catch (error) {
 
         console.error(
-            "Start search error:",
+            "Search error:",
             error
         );
 
 
-        stopSearching();
+        stopSearch();
 
 
         alert(
-            "Could not start chat.\n\n" +
+            "Could not start searching.\n\n" +
             error.message
         );
 
@@ -199,7 +222,7 @@ async function startSearching() {
 
 
 // ============================================================
-// CHECK FOR MATCH
+// CHECK FOR A MATCH
 // ============================================================
 
 async function checkForMatch() {
@@ -216,7 +239,7 @@ async function checkForMatch() {
             error
         } =
             await supabaseClient.rpc(
-                "find_or_create_chat",
+                "find_match",
                 {
                     p_user_id: userId
                 }
@@ -240,7 +263,9 @@ async function checkForMatch() {
             data[0];
 
 
-        // Nobody found yet.
+        // ----------------------------------------------------
+        // STILL NO PERSON ONLINE
+        // ----------------------------------------------------
 
         if (
             !match.room_id ||
@@ -250,16 +275,31 @@ async function checkForMatch() {
         }
 
 
-        // MATCH FOUND 🎉
+        // ----------------------------------------------------
+        // REAL MATCH FOUND 🎉
+        // ----------------------------------------------------
 
         currentRoomId =
             match.room_id;
+
 
         strangerId =
             match.stranger_id;
 
 
-        stopSearching();
+        stopSearch();
+
+
+        // Remove our waiting entry.
+        // The room is already safely created.
+
+        await supabaseClient
+            .from("waiting_users")
+            .delete()
+            .eq(
+                "user_id",
+                userId
+            );
 
 
         await openChat();
@@ -268,12 +308,12 @@ async function checkForMatch() {
     } catch (error) {
 
         console.error(
-            "Matching error:",
+            "Match error:",
             error
         );
 
 
-        stopSearching();
+        stopSearch();
 
 
         alert(
@@ -293,14 +333,16 @@ async function checkForMatch() {
 // STOP SEARCHING
 // ============================================================
 
-function stopSearching() {
+function stopSearch() {
 
     isSearching = false;
 
 
     if (searchTimer) {
 
-        clearInterval(searchTimer);
+        clearInterval(
+            searchTimer
+        );
 
         searchTimer = null;
 
@@ -323,34 +365,38 @@ async function openChat() {
 
 
     messagesBox.innerHTML = `
+
         <div class="system-message">
+
             🎉 You are connected with a stranger.
+
             <br>
+
             Say hello 👋
+
         </div>
+
     `;
 
-
-    lastMessageCount = 0;
-
-
-    // Load existing messages.
 
     await loadMessages();
 
 
-    // Subscribe to instant messages.
-
     subscribeToMessages();
 
 
-    messageInput.focus();
+    setTimeout(
+        () => {
+            messageInput.focus();
+        },
+        200
+    );
 
 }
 
 
 // ============================================================
-// LOAD MESSAGES
+// LOAD ROOM MESSAGES
 // ============================================================
 
 async function loadMessages() {
@@ -382,7 +428,7 @@ async function loadMessages() {
     if (error) {
 
         console.error(
-            "Load messages error:",
+            "Message loading error:",
             error
         );
 
@@ -391,60 +437,42 @@ async function loadMessages() {
     }
 
 
-    renderMessages(
-        data || []
-    );
+    if (
+        !data ||
+        data.length === 0
+    ) {
+        return;
+    }
 
-}
-
-
-// ============================================================
-// RENDER MESSAGES
-// ============================================================
-
-function renderMessages(messages) {
 
     messagesBox.innerHTML = "";
 
 
-    if (messages.length === 0) {
-
-        messagesBox.innerHTML = `
-            <div class="system-message">
-                🎉 You are connected with a stranger.
-                <br>
-                Say hello 👋
-            </div>
-        `;
-
-        return;
-
-    }
-
-
-    messages.forEach(
+    data.forEach(
         message => {
 
             addMessage(
+
                 message.message,
+
                 message.sender_id === userId
+
             );
 
         }
     );
 
-
-    lastMessageCount =
-        messages.length;
-
 }
 
 
 // ============================================================
-// ADD ONE MESSAGE
+// ADD MESSAGE TO SCREEN
 // ============================================================
 
-function addMessage(text, mine) {
+function addMessage(
+    text,
+    mine
+) {
 
     const wrapper =
         document.createElement("div");
@@ -464,13 +492,14 @@ function addMessage(text, mine) {
         "bubble";
 
 
-    // Safe against HTML injection.
+    // Safe text rendering.
 
     bubble.textContent =
         text;
 
 
     wrapper.appendChild(bubble);
+
 
     messagesBox.appendChild(wrapper);
 
@@ -482,7 +511,7 @@ function addMessage(text, mine) {
 
 
 // ============================================================
-// SUPABASE REALTIME
+// REALTIME MESSAGES
 // ============================================================
 
 function subscribeToMessages() {
@@ -492,14 +521,17 @@ function subscribeToMessages() {
 
     realtimeChannel =
         supabaseClient
+
             .channel(
-                `room-${currentRoomId}`
+                "room-" + currentRoomId
             )
+
             .on(
 
                 "postgres_changes",
 
                 {
+
                     event: "INSERT",
 
                     schema: "public",
@@ -507,7 +539,8 @@ function subscribeToMessages() {
                     table: "messages",
 
                     filter:
-                        `room_id=eq.${currentRoomId}`
+                        "room_id=eq." +
+                        currentRoomId
 
                 },
 
@@ -517,8 +550,8 @@ function subscribeToMessages() {
                         payload.new;
 
 
-                    // Don't duplicate our own message.
-                    // It was already added instantly.
+                    // Ignore our own message because
+                    // we already display it instantly.
 
                     if (
                         message.sender_id === userId
@@ -532,17 +565,15 @@ function subscribeToMessages() {
                         false
                     );
 
-
-                    lastMessageCount++;
-
                 }
 
             )
+
             .subscribe(
                 status => {
 
                     console.log(
-                        "Realtime status:",
+                        "Realtime:",
                         status
                     );
 
@@ -553,7 +584,7 @@ function subscribeToMessages() {
 
 
 // ============================================================
-// UNSUBSCRIBE REALTIME
+// REMOVE REALTIME CONNECTION
 // ============================================================
 
 function unsubscribeRealtime() {
@@ -563,6 +594,7 @@ function unsubscribeRealtime() {
         supabaseClient.removeChannel(
             realtimeChannel
         );
+
 
         realtimeChannel = null;
 
@@ -589,7 +621,7 @@ async function sendMessage() {
     if (!currentRoomId) {
 
         alert(
-            "No active chat."
+            "You are not connected to anyone."
         );
 
         return;
@@ -597,9 +629,9 @@ async function sendMessage() {
     }
 
 
-    // Clear immediately.
+    // Disable button while sending.
 
-    messageInput.value = "";
+    sendBtn.disabled = true;
 
 
     try {
@@ -622,7 +654,9 @@ async function sendMessage() {
                         text
 
                 })
+
                 .select()
+
                 .single();
 
 
@@ -631,7 +665,12 @@ async function sendMessage() {
         }
 
 
-        // Show our message instantly.
+        // Clear input.
+
+        messageInput.value = "";
+
+
+        // Display immediately.
 
         addMessage(
             data.message,
@@ -639,21 +678,12 @@ async function sendMessage() {
         );
 
 
-        lastMessageCount++;
-
-
     } catch (error) {
 
         console.error(
-            "Send message error:",
+            "Send error:",
             error
         );
-
-
-        // Restore text if sending failed.
-
-        messageInput.value =
-            text;
 
 
         alert(
@@ -662,6 +692,9 @@ async function sendMessage() {
         );
 
     }
+
+
+    sendBtn.disabled = false;
 
 
     messageInput.focus();
@@ -675,7 +708,7 @@ async function sendMessage() {
 
 async function cancelSearch() {
 
-    stopSearching();
+    stopSearch();
 
 
     try {
@@ -690,7 +723,10 @@ async function cancelSearch() {
 
     } catch (error) {
 
-        console.error(error);
+        console.error(
+            "Cancel error:",
+            error
+        );
 
     }
 
@@ -706,9 +742,9 @@ async function cancelSearch() {
 
 async function nextStranger() {
 
-    unsubscribeRealtime();
+    // Stop current realtime connection.
 
-    stopSearching();
+    unsubscribeRealtime();
 
 
     currentRoomId = null;
@@ -716,70 +752,91 @@ async function nextStranger() {
     strangerId = null;
 
 
+    // Start completely fresh.
+
     await startSearching();
 
 }
 
 
 // ============================================================
-// REPORT
+// REPORT BUTTON
 // ============================================================
 
 function reportStranger() {
 
     alert(
-        "🚧 Report system is coming soon.\n\n" +
-        "For now, you can click Next to leave this conversation."
+
+        "⚠️ Report system will be added soon.\n\n" +
+
+        "For now, you can click Next to leave the conversation."
+
     );
 
 }
 
 
 // ============================================================
-// EVENTS
+// BUTTON EVENTS
 // ============================================================
 
 startBtn.addEventListener(
+
     "click",
+
     startSearching
+
 );
 
 
 cancelSearchBtn.addEventListener(
+
     "click",
+
     cancelSearch
+
 );
 
 
 nextBtn.addEventListener(
+
     "click",
+
     nextStranger
+
 );
 
 
 reportBtn.addEventListener(
+
     "click",
+
     reportStranger
+
 );
 
 
 sendBtn.addEventListener(
+
     "click",
+
     sendMessage
+
 );
 
 
 // ============================================================
-// ENTER TO SEND
+// ENTER KEY
 // ============================================================
 
 messageInput.addEventListener(
+
     "keydown",
+
     event => {
 
         if (
-            event.key === "Enter" &&
-            !event.shiftKey
+            event.key === "Enter"
         ) {
 
             event.preventDefault();
@@ -789,18 +846,22 @@ messageInput.addEventListener(
         }
 
     }
+
 );
 
 
 // ============================================================
-// PAGE CLEANUP
+// PAGE CLOSE CLEANUP
 // ============================================================
 
 window.addEventListener(
+
     "beforeunload",
+
     () => {
 
         unsubscribeRealtime();
 
     }
+
 );
