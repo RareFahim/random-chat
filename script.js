@@ -1,171 +1,105 @@
-const SUPABASE_URL = "https://wvwuvpgcdydtdivwitog.supabase.co";
-const SUPABASE_KEY = "sb_publishable_ok3gIUiVSKNk_xE28hl5ug_nUkKQ7Sv";
+// ============================================================
+// RANDOM CHAT - VERSION 2
+// ============================================================
 
 
-/* =========================================
-   ELEMENTS
-========================================= */
+// ============================================================
+// SUPABASE
+// ============================================================
 
-const homeScreen = document.getElementById("homeScreen");
-const searchingScreen = document.getElementById("searchingScreen");
-const chatScreen = document.getElementById("chatScreen");
+const SUPABASE_URL =
+    "https://wvwuvpgcdydtdivwitog.supabase.co";
 
-const startBtn = document.getElementById("startBtn");
-const cancelSearchBtn = document.getElementById("cancelSearchBtn");
-const nextBtn = document.getElementById("nextBtn");
-const reportBtn = document.getElementById("reportBtn");
-
-const sendBtn = document.getElementById("sendBtn");
-const messageInput = document.getElementById("messageInput");
-const messagesBox = document.getElementById("messages");
+const SUPABASE_KEY =
+    "sb_publishable_ok3gIUiVSKNk_xE28hl5ug_nUkKQ7Sv";
 
 
-/* =========================================
-   USER STATE
-========================================= */
+const supabaseClient =
+    window.supabase.createClient(
+        SUPABASE_URL,
+        SUPABASE_KEY
+    );
 
-let userId = crypto.randomUUID();
+
+// ============================================================
+// ELEMENTS
+// ============================================================
+
+const homeScreen =
+    document.getElementById("homeScreen");
+
+const searchingScreen =
+    document.getElementById("searchingScreen");
+
+const chatScreen =
+    document.getElementById("chatScreen");
+
+
+const startBtn =
+    document.getElementById("startBtn");
+
+const cancelSearchBtn =
+    document.getElementById("cancelSearchBtn");
+
+const nextBtn =
+    document.getElementById("nextBtn");
+
+const reportBtn =
+    document.getElementById("reportBtn");
+
+const sendBtn =
+    document.getElementById("sendBtn");
+
+const messageInput =
+    document.getElementById("messageInput");
+
+const messagesBox =
+    document.getElementById("messages");
+
+const connectionStatus =
+    document.getElementById("connectionStatus");
+
+
+// ============================================================
+// USER STATE
+// ============================================================
+
+// Store anonymous ID in browser.
+// Refreshing the page won't create a new identity.
+
+let userId =
+    localStorage.getItem("randomChatUserId");
+
+
+if (!userId) {
+
+    userId =
+        crypto.randomUUID();
+
+    localStorage.setItem(
+        "randomChatUserId",
+        userId
+    );
+
+}
+
 
 let currentRoomId = null;
 
-let searchTimer = null;
-
-let messageTimer = null;
+let strangerId = null;
 
 let isSearching = false;
 
+let searchTimer = null;
 
-/* =========================================
-   SUPABASE REST API
-========================================= */
+let realtimeChannel = null;
 
-async function api(path, options = {}) {
-
-    const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/${path}`,
-        {
-            ...options,
-
-            headers: {
-                "apikey": SUPABASE_KEY,
-                "Authorization": `Bearer ${SUPABASE_KEY}`,
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-
-                "Prefer": "return=representation",
-
-                ...(options.headers || {})
-            }
-        }
-    );
+let lastMessageCount = 0;
 
 
-    const text = await response.text();
-
-
-    if (!response.ok) {
-
-        let errorMessage = text;
-
-        try {
-
-            const data = JSON.parse(text);
-
-            errorMessage =
-                data.message ||
-                data.details ||
-                data.hint ||
-                data.error ||
-                text;
-
-        } catch (error) {
-            // Keep original message
-        }
-
-
-        throw new Error(
-            `Supabase ${response.status}: ${errorMessage}`
-        );
-    }
-
-
-    if (!text) {
-        return null;
-    }
-
-
-    try {
-        return JSON.parse(text);
-    } catch (error) {
-        return null;
-    }
-}
-
-
-/* =========================================
-   RPC CALL
-========================================= */
-
-async function findOrCreateChat() {
-
-    const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/rpc/find_or_create_chat`,
-        {
-            method: "POST",
-
-            headers: {
-                "apikey": SUPABASE_KEY,
-                "Authorization": `Bearer ${SUPABASE_KEY}`,
-                "Content-Type": "application/json",
-                "Accept": "application/json"
-            },
-
-            body: JSON.stringify({
-                p_user_id: userId
-            })
-        }
-    );
-
-
-    const text = await response.text();
-
-
-    if (!response.ok) {
-
-        let message = text;
-
-        try {
-
-            const data = JSON.parse(text);
-
-            message =
-                data.message ||
-                data.details ||
-                data.hint ||
-                data.error ||
-                text;
-
-        } catch (error) {}
-
-
-        throw new Error(
-            `Supabase ${response.status}: ${message}`
-        );
-    }
-
-
-    if (!text) {
-        return null;
-    }
-
-
-    return JSON.parse(text);
-}
-
-
-/* =========================================
-   SCREEN MANAGEMENT
-========================================= */
+// ============================================================
+// SCREEN MANAGEMENT
+// ============================================================
 
 function showScreen(screen) {
 
@@ -175,13 +109,15 @@ function showScreen(screen) {
 
     chatScreen.classList.add("hidden");
 
+
     screen.classList.remove("hidden");
+
 }
 
 
-/* =========================================
-   START SEARCH
-========================================= */
+// ============================================================
+// START SEARCHING
+// ============================================================
 
 async function startSearching() {
 
@@ -192,61 +128,56 @@ async function startSearching() {
 
     isSearching = true;
 
+    currentRoomId = null;
+
+    strangerId = null;
+
 
     showScreen(searchingScreen);
 
 
     try {
 
-        /*
-          Remove an old waiting entry
-          for this user.
-        */
+        // Remove old waiting entry.
 
-        await api(
-            `waiting_users?user_id=eq.${userId}`,
-            {
-                method: "DELETE"
-            }
-        );
+        await supabaseClient
+            .from("waiting_users")
+            .delete()
+            .eq("user_id", userId);
 
 
-        /*
-          Put this user into the queue.
-        */
+        // Add ourselves to queue.
 
-        await api(
-            "waiting_users",
-            {
-                method: "POST",
-
-                body: JSON.stringify({
+        const { error: insertError } =
+            await supabaseClient
+                .from("waiting_users")
+                .insert({
                     user_id: userId
-                })
-            }
-        );
+                });
 
 
-        /*
-          Try to find a stranger.
-        */
+        if (insertError) {
+            throw insertError;
+        }
+
+
+        // Check immediately.
 
         await checkForMatch();
 
 
-        /*
-          Keep checking until matched.
-        */
+        // Continue checking.
 
-        searchTimer = setInterval(
-            checkForMatch,
-            2000
-        );
+        searchTimer =
+            setInterval(
+                checkForMatch,
+                1500
+            );
 
     } catch (error) {
 
         console.error(
-            "Search error:",
+            "Start search error:",
             error
         );
 
@@ -261,13 +192,15 @@ async function startSearching() {
 
 
         showScreen(homeScreen);
+
     }
+
 }
 
 
-/* =========================================
-   CHECK FOR MATCH
-========================================= */
+// ============================================================
+// CHECK FOR MATCH
+// ============================================================
 
 async function checkForMatch() {
 
@@ -278,69 +211,59 @@ async function checkForMatch() {
 
     try {
 
-        const result =
-            await findOrCreateChat();
+        const {
+            data,
+            error
+        } =
+            await supabaseClient.rpc(
+                "find_or_create_chat",
+                {
+                    p_user_id: userId
+                }
+            );
 
 
-        console.log(
-            "Match result:",
-            result
-        );
+        if (error) {
+            throw error;
+        }
 
-
-        /*
-          RPC returns an array because
-          the function returns TABLE.
-        */
 
         if (
-            !result ||
-            !Array.isArray(result) ||
-            result.length === 0
+            !data ||
+            data.length === 0
         ) {
-
             return;
         }
 
 
-        const match = result[0];
+        const match =
+            data[0];
 
 
-        /*
-          No stranger yet.
-
-          The RPC deliberately returns NULL
-          when nobody is waiting.
-        */
+        // Nobody found yet.
 
         if (
-            !match ||
             !match.room_id ||
             !match.stranger_id
         ) {
-
             return;
         }
 
 
-        /*
-          MATCH FOUND!
-        */
+        // MATCH FOUND 🎉
 
         currentRoomId =
             match.room_id;
 
-
-        console.log(
-            "Matched!",
-            currentRoomId
-        );
+        strangerId =
+            match.stranger_id;
 
 
         stopSearching();
 
 
-        openChat();
+        await openChat();
+
 
     } catch (error) {
 
@@ -360,13 +283,15 @@ async function checkForMatch() {
 
 
         showScreen(homeScreen);
+
     }
+
 }
 
 
-/* =========================================
-   STOP SEARCHING
-========================================= */
+// ============================================================
+// STOP SEARCHING
+// ============================================================
 
 function stopSearching() {
 
@@ -378,48 +303,55 @@ function stopSearching() {
         clearInterval(searchTimer);
 
         searchTimer = null;
+
     }
+
 }
 
 
-/* =========================================
-   OPEN CHAT
-========================================= */
+// ============================================================
+// OPEN CHAT
+// ============================================================
 
 async function openChat() {
 
     showScreen(chatScreen);
 
 
+    connectionStatus.textContent =
+        "● Connected";
+
+
     messagesBox.innerHTML = `
-        <div class="welcome">
-            You are now connected with a stranger.<br>
+        <div class="system-message">
+            🎉 You are connected with a stranger.
+            <br>
             Say hello 👋
         </div>
     `;
 
 
+    lastMessageCount = 0;
+
+
+    // Load existing messages.
+
     await loadMessages();
 
 
-    /*
-      Temporary message polling.
+    // Subscribe to instant messages.
 
-      We will replace this with true
-      Supabase Realtime after the matching
-      system is confirmed working.
-    */
-
-    startMessagePolling();
+    subscribeToMessages();
 
 
     messageInput.focus();
+
 }
 
 
-/* =========================================
-   LOAD MESSAGES
-========================================= */
+// ============================================================
+// LOAD MESSAGES
+// ============================================================
 
 async function loadMessages() {
 
@@ -428,60 +360,47 @@ async function loadMessages() {
     }
 
 
-    try {
+    const {
+        data,
+        error
+    } =
+        await supabaseClient
+            .from("messages")
+            .select("*")
+            .eq(
+                "room_id",
+                currentRoomId
+            )
+            .order(
+                "created_at",
+                {
+                    ascending: true
+                }
+            );
 
-        const messages = await api(
-            `messages?select=id,room_id,sender_id,message,created_at&room_id=eq.${currentRoomId}&order=created_at.asc`
-        );
 
-
-        if (!messages) {
-            return;
-        }
-
-
-        renderMessages(messages);
-
-    } catch (error) {
+    if (error) {
 
         console.error(
-            "Message loading error:",
+            "Load messages error:",
             error
         );
+
+        return;
+
     }
-}
 
 
-/* =========================================
-   MESSAGE POLLING
-========================================= */
-
-function startMessagePolling() {
-
-    stopMessagePolling();
-
-
-    messageTimer = setInterval(
-        loadMessages,
-        1500
+    renderMessages(
+        data || []
     );
+
 }
 
 
-function stopMessagePolling() {
-
-    if (messageTimer) {
-
-        clearInterval(messageTimer);
-
-        messageTimer = null;
-    }
-}
-
-
-/* =========================================
-   RENDER MESSAGES
-========================================= */
+// ============================================================
+// RENDER MESSAGES
+// ============================================================
 
 function renderMessages(messages) {
 
@@ -491,30 +410,170 @@ function renderMessages(messages) {
     if (messages.length === 0) {
 
         messagesBox.innerHTML = `
-            <div class="welcome">
-                You are now connected with a stranger.<br>
+            <div class="system-message">
+                🎉 You are connected with a stranger.
+                <br>
                 Say hello 👋
             </div>
         `;
 
         return;
+
     }
 
 
-    messages.forEach(message => {
+    messages.forEach(
+        message => {
 
-        addMessage(
-            message.message,
-            message.sender_id === userId
-        );
+            addMessage(
+                message.message,
+                message.sender_id === userId
+            );
 
-    });
+        }
+    );
+
+
+    lastMessageCount =
+        messages.length;
+
 }
 
 
-/* =========================================
-   SEND MESSAGE
-========================================= */
+// ============================================================
+// ADD ONE MESSAGE
+// ============================================================
+
+function addMessage(text, mine) {
+
+    const wrapper =
+        document.createElement("div");
+
+
+    wrapper.className =
+        mine
+            ? "message mine"
+            : "message";
+
+
+    const bubble =
+        document.createElement("div");
+
+
+    bubble.className =
+        "bubble";
+
+
+    // Safe against HTML injection.
+
+    bubble.textContent =
+        text;
+
+
+    wrapper.appendChild(bubble);
+
+    messagesBox.appendChild(wrapper);
+
+
+    messagesBox.scrollTop =
+        messagesBox.scrollHeight;
+
+}
+
+
+// ============================================================
+// SUPABASE REALTIME
+// ============================================================
+
+function subscribeToMessages() {
+
+    unsubscribeRealtime();
+
+
+    realtimeChannel =
+        supabaseClient
+            .channel(
+                `room-${currentRoomId}`
+            )
+            .on(
+
+                "postgres_changes",
+
+                {
+                    event: "INSERT",
+
+                    schema: "public",
+
+                    table: "messages",
+
+                    filter:
+                        `room_id=eq.${currentRoomId}`
+
+                },
+
+                payload => {
+
+                    const message =
+                        payload.new;
+
+
+                    // Don't duplicate our own message.
+                    // It was already added instantly.
+
+                    if (
+                        message.sender_id === userId
+                    ) {
+                        return;
+                    }
+
+
+                    addMessage(
+                        message.message,
+                        false
+                    );
+
+
+                    lastMessageCount++;
+
+                }
+
+            )
+            .subscribe(
+                status => {
+
+                    console.log(
+                        "Realtime status:",
+                        status
+                    );
+
+                }
+            );
+
+}
+
+
+// ============================================================
+// UNSUBSCRIBE REALTIME
+// ============================================================
+
+function unsubscribeRealtime() {
+
+    if (realtimeChannel) {
+
+        supabaseClient.removeChannel(
+            realtimeChannel
+        );
+
+        realtimeChannel = null;
+
+    }
+
+}
+
+
+// ============================================================
+// SEND MESSAGE
+// ============================================================
 
 async function sendMessage() {
 
@@ -530,36 +589,58 @@ async function sendMessage() {
     if (!currentRoomId) {
 
         alert(
-            "There is no active chat."
+            "No active chat."
         );
 
         return;
+
     }
+
+
+    // Clear immediately.
+
+    messageInput.value = "";
 
 
     try {
 
-        await api(
-            "messages",
-            {
-                method: "POST",
+        const {
+            data,
+            error
+        } =
+            await supabaseClient
+                .from("messages")
+                .insert({
 
-                body: JSON.stringify({
-                    room_id: currentRoomId,
-                    sender_id: userId,
-                    message: text
+                    room_id:
+                        currentRoomId,
+
+                    sender_id:
+                        userId,
+
+                    message:
+                        text
+
                 })
-            }
+                .select()
+                .single();
+
+
+        if (error) {
+            throw error;
+        }
+
+
+        // Show our message instantly.
+
+        addMessage(
+            data.message,
+            true
         );
 
 
-        messageInput.value = "";
+        lastMessageCount++;
 
-
-        await loadMessages();
-
-
-        messageInput.focus();
 
     } catch (error) {
 
@@ -569,56 +650,28 @@ async function sendMessage() {
         );
 
 
+        // Restore text if sending failed.
+
+        messageInput.value =
+            text;
+
+
         alert(
             "Message could not be sent.\n\n" +
             error.message
         );
+
     }
+
+
+    messageInput.focus();
+
 }
 
 
-/* =========================================
-   DISPLAY MESSAGE
-========================================= */
-
-function addMessage(text, mine) {
-
-    const wrapper =
-        document.createElement("div");
-
-
-    wrapper.className =
-        `message ${mine ? "mine" : ""}`;
-
-
-    const bubble =
-        document.createElement("div");
-
-
-    bubble.className = "bubble";
-
-
-    /*
-      textContent prevents HTML injection.
-    */
-
-    bubble.textContent = text;
-
-
-    wrapper.appendChild(bubble);
-
-
-    messagesBox.appendChild(wrapper);
-
-
-    messagesBox.scrollTop =
-        messagesBox.scrollHeight;
-}
-
-
-/* =========================================
-   CANCEL SEARCH
-========================================= */
+// ============================================================
+// CANCEL SEARCH
+// ============================================================
 
 async function cancelSearch() {
 
@@ -627,98 +680,64 @@ async function cancelSearch() {
 
     try {
 
-        await api(
-            `waiting_users?user_id=eq.${userId}`,
-            {
-                method: "DELETE"
-            }
-        );
+        await supabaseClient
+            .from("waiting_users")
+            .delete()
+            .eq(
+                "user_id",
+                userId
+            );
 
     } catch (error) {
 
-        console.error(
-            "Cancel search error:",
-            error
-        );
+        console.error(error);
+
     }
 
 
     showScreen(homeScreen);
+
 }
 
 
-/* =========================================
-   DISCONNECT
-========================================= */
+// ============================================================
+// NEXT STRANGER
+// ============================================================
 
-async function disconnect() {
+async function nextStranger() {
+
+    unsubscribeRealtime();
 
     stopSearching();
-
-    stopMessagePolling();
-
-
-    try {
-
-        await api(
-            `waiting_users?user_id=eq.${userId}`,
-            {
-                method: "DELETE"
-            }
-        );
-
-    } catch (error) {
-
-        console.error(
-            "Disconnect error:",
-            error
-        );
-    }
 
 
     currentRoomId = null;
 
-
-    showScreen(homeScreen);
-}
-
-
-/* =========================================
-   NEXT STRANGER
-========================================= */
-
-async function nextStranger() {
-
-    await disconnect();
-
-
-    /*
-      Generate a new anonymous identity.
-    */
-
-    userId =
-        crypto.randomUUID();
+    strangerId = null;
 
 
     await startSearching();
+
 }
 
 
-/* =========================================
-   REPORT
-========================================= */
+// ============================================================
+// REPORT
+// ============================================================
 
 function reportStranger() {
 
     alert(
-        "Report system will be added next."
+        "🚧 Report system is coming soon.\n\n" +
+        "For now, you can click Next to leave this conversation."
     );
+
 }
 
 
-/* =========================================
-   BUTTON EVENTS
-========================================= */
+// ============================================================
+// EVENTS
+// ============================================================
 
 startBtn.addEventListener(
     "click",
@@ -729,12 +748,6 @@ startBtn.addEventListener(
 cancelSearchBtn.addEventListener(
     "click",
     cancelSearch
-);
-
-
-sendBtn.addEventListener(
-    "click",
-    sendMessage
 );
 
 
@@ -750,19 +763,44 @@ reportBtn.addEventListener(
 );
 
 
-/* =========================================
-   ENTER TO SEND
-========================================= */
+sendBtn.addEventListener(
+    "click",
+    sendMessage
+);
+
+
+// ============================================================
+// ENTER TO SEND
+// ============================================================
 
 messageInput.addEventListener(
     "keydown",
     event => {
 
-        if (event.key === "Enter") {
+        if (
+            event.key === "Enter" &&
+            !event.shiftKey
+        ) {
 
             event.preventDefault();
 
             sendMessage();
+
         }
+
+    }
+);
+
+
+// ============================================================
+// PAGE CLEANUP
+// ============================================================
+
+window.addEventListener(
+    "beforeunload",
+    () => {
+
+        unsubscribeRealtime();
+
     }
 );
