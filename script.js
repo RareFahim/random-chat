@@ -935,7 +935,9 @@ async function sendRealMessage(text) {
 }
 
 
-// ============================================================
+
+
+ // ============================================================
 // SEND AI MESSAGE
 // ============================================================
 
@@ -964,7 +966,7 @@ async function sendAiMessage(text) {
     messageInput.value = "";
 
 
-    // Save user message in history.
+    // Save user message in conversation history.
 
     aiMessages.push({
 
@@ -975,48 +977,10 @@ async function sendAiMessage(text) {
     });
 
 
-    // Keep history small.
+    // Keep conversation history small.
 
     aiMessages =
         aiMessages.slice(-12);
-
-
-    // --------------------------------------------------------
-    // Show typing message.
-    // --------------------------------------------------------
-
-    const typingWrapper =
-        document.createElement("div");
-
-
-    typingWrapper.className =
-        "message";
-
-
-    const typingBubble =
-        document.createElement("div");
-
-
-    typingBubble.className =
-        "bubble typing";
-
-
-    typingBubble.textContent =
-        "AI Companion is thinking...";
-
-
-    typingWrapper.appendChild(
-        typingBubble
-    );
-
-
-    messagesBox.appendChild(
-        typingWrapper
-    );
-
-
-    messagesBox.scrollTop =
-        messagesBox.scrollHeight;
 
 
     try {
@@ -1052,11 +1016,6 @@ async function sendAiMessage(text) {
             await response.json();
 
 
-        // Remove typing message.
-
-        typingWrapper.remove();
-
-
         if (!response.ok) {
 
             throw new Error(
@@ -1082,7 +1041,7 @@ async function sendAiMessage(text) {
         );
 
 
-        // Save AI response.
+        // Save AI response in conversation history.
 
         aiMessages.push({
 
@@ -1106,9 +1065,6 @@ async function sendAiMessage(text) {
         );
 
 
-        typingWrapper.remove();
-
-
         addSystemMessage(
             "😭 AI Companion is having a tiny brain break. Try again in a moment."
         );
@@ -1122,7 +1078,7 @@ async function sendAiMessage(text) {
 
     messageInput.focus();
 
-}
+        }    
 
 
 // ============================================================
