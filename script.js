@@ -38,8 +38,7 @@ const AI_WORKER_URL =
 // 5 minutes = 300,000 milliseconds
 
 const AI_FALLBACK_TIME =
-    5 * 60 * 1000;
-
+    15 * 1000;
 
 // ============================================================
 // PAGE ELEMENTS
