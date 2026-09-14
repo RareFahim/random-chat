@@ -1,6 +1,6 @@
 // ============================================================
 // RANDOM CHAT
-// COMPLETE MATCHING + REALTIME CHAT SYSTEM
+// REAL STRANGER CHAT + AI COMPANION FALLBACK
 // DEVELOPED BY FAHIM
 // ============================================================
 
@@ -21,6 +21,24 @@ const supabaseClient =
         SUPABASE_URL,
         SUPABASE_KEY
     );
+
+
+// ============================================================
+// AI COMPANION CONFIGURATION
+// ============================================================
+
+const AI_WORKER_URL =
+    "https://random-chat-ai.elitesnipex13.workers.dev/api/chat";
+
+
+// ============================================================
+// AI FALLBACK SETTINGS
+// ============================================================
+
+// 5 minutes = 300,000 milliseconds
+
+const AI_FALLBACK_TIME =
+    5 * 60 * 1000;
 
 
 // ============================================================
@@ -95,7 +113,21 @@ let isSearching = false;
 
 let searchTimer = null;
 
+let aiFallbackTimer = null;
+
 let realtimeChannel = null;
+
+let chatMode = null;
+
+
+// AI conversation history.
+
+let aiMessages = [];
+
+
+// Prevent multiple AI requests at once.
+
+let isAiThinking = false;
 
 
 // ============================================================
@@ -127,11 +159,20 @@ async function startSearching() {
     }
 
 
-    // Reset old local chat state.
+    // --------------------------------------------------------
+    // CLEAN OLD STATE
+    // --------------------------------------------------------
+
+    cleanupChat();
+
 
     currentRoomId = null;
 
     strangerId = null;
+
+    chatMode = null;
+
+    aiMessages = [];
 
     isSearching = true;
 
@@ -142,7 +183,7 @@ async function startSearching() {
     try {
 
         // ----------------------------------------------------
-        // Remove any old queue entry for this user.
+        // Remove any old queue entry.
         // ----------------------------------------------------
 
         await supabaseClient
@@ -155,7 +196,7 @@ async function startSearching() {
 
 
         // ----------------------------------------------------
-        // Add ourselves as a NEW waiting user.
+        // Add ourselves to the waiting queue.
         // ----------------------------------------------------
 
         const {
@@ -179,12 +220,16 @@ async function startSearching() {
         }
 
 
+        // ----------------------------------------------------
         // Check immediately.
+        // ----------------------------------------------------
 
         await checkForMatch();
 
 
-        // Keep checking while searching.
+        // ----------------------------------------------------
+        // Keep checking every second.
+        // ----------------------------------------------------
 
         if (isSearching) {
 
@@ -192,6 +237,17 @@ async function startSearching() {
                 setInterval(
                     checkForMatch,
                     1000
+                );
+
+
+            // ------------------------------------------------
+            // START 5-MINUTE AI FALLBACK TIMER
+            // ------------------------------------------------
+
+            aiFallbackTimer =
+                setTimeout(
+                    startAiCompanion,
+                    AI_FALLBACK_TIME
                 );
 
         }
@@ -210,7 +266,10 @@ async function startSearching() {
 
         alert(
             "Could not start searching.\n\n" +
-            error.message
+            (
+                error.message ||
+                "Unknown error"
+            )
         );
 
 
@@ -222,7 +281,7 @@ async function startSearching() {
 
 
 // ============================================================
-// CHECK FOR A MATCH
+// CHECK FOR A REAL MATCH
 // ============================================================
 
 async function checkForMatch() {
@@ -264,7 +323,7 @@ async function checkForMatch() {
 
 
         // ----------------------------------------------------
-        // STILL NO PERSON ONLINE
+        // STILL NO REAL PERSON
         // ----------------------------------------------------
 
         if (
@@ -276,7 +335,7 @@ async function checkForMatch() {
 
 
         // ----------------------------------------------------
-        // REAL MATCH FOUND 🎉
+        // REAL STRANGER FOUND 🎉
         // ----------------------------------------------------
 
         currentRoomId =
@@ -287,11 +346,14 @@ async function checkForMatch() {
             match.stranger_id;
 
 
+        chatMode =
+            "real";
+
+
         stopSearch();
 
 
         // Remove our waiting entry.
-        // The room is already safely created.
 
         await supabaseClient
             .from("waiting_users")
@@ -302,7 +364,7 @@ async function checkForMatch() {
             );
 
 
-        await openChat();
+        await openRealChat();
 
 
     } catch (error) {
@@ -313,16 +375,8 @@ async function checkForMatch() {
         );
 
 
-        stopSearch();
-
-
-        alert(
-            "Matching failed.\n\n" +
-            error.message
-        );
-
-
-        showScreen(homeScreen);
+        // Don't immediately destroy the search because of
+        // a temporary network problem.
 
     }
 
@@ -348,14 +402,116 @@ function stopSearch() {
 
     }
 
+
+    if (aiFallbackTimer) {
+
+        clearTimeout(
+            aiFallbackTimer
+        );
+
+        aiFallbackTimer = null;
+
+    }
+
 }
 
 
 // ============================================================
-// OPEN CHAT
+// START AI COMPANION
 // ============================================================
 
-async function openChat() {
+async function startAiCompanion() {
+
+    // Only start AI if we are STILL searching.
+
+    if (!isSearching) {
+        return;
+    }
+
+
+    // --------------------------------------------------------
+    // Stop real-person search.
+    // --------------------------------------------------------
+
+    stopSearch();
+
+
+    // --------------------------------------------------------
+    // Remove ourselves from waiting queue.
+    // --------------------------------------------------------
+
+    try {
+
+        await supabaseClient
+            .from("waiting_users")
+            .delete()
+            .eq(
+                "user_id",
+                userId
+            );
+
+    } catch (error) {
+
+        console.error(
+            "AI queue cleanup error:",
+            error
+        );
+
+    }
+
+
+    // --------------------------------------------------------
+    // Switch to AI mode.
+    // --------------------------------------------------------
+
+    currentRoomId = null;
+
+    strangerId = null;
+
+    chatMode =
+        "ai";
+
+
+    aiMessages = [];
+
+
+    // --------------------------------------------------------
+    // OPEN AI CHAT
+    // --------------------------------------------------------
+
+    showScreen(chatScreen);
+
+
+    connectionStatus.textContent =
+        "● AI Companion";
+
+
+    messagesBox.innerHTML = "";
+
+
+    addSystemMessage(
+        "🤖 No strangers are online right now, " +
+        "so I'll keep you company 😄"
+    );
+
+
+    setTimeout(
+        () => {
+
+            messageInput.focus();
+
+        },
+        200
+    );
+
+}
+
+
+// ============================================================
+// OPEN REAL CHAT
+// ============================================================
+
+async function openRealChat() {
 
     showScreen(chatScreen);
 
@@ -387,7 +543,9 @@ async function openChat() {
 
     setTimeout(
         () => {
+
             messageInput.focus();
+
         },
         200
     );
@@ -396,12 +554,44 @@ async function openChat() {
 
 
 // ============================================================
-// LOAD ROOM MESSAGES
+// ADD SYSTEM MESSAGE
+// ============================================================
+
+function addSystemMessage(text) {
+
+    const systemMessage =
+        document.createElement("div");
+
+
+    systemMessage.className =
+        "system-message";
+
+
+    systemMessage.textContent =
+        text;
+
+
+    messagesBox.appendChild(
+        systemMessage
+    );
+
+
+    messagesBox.scrollTop =
+        messagesBox.scrollHeight;
+
+}
+
+
+// ============================================================
+// LOAD REAL ROOM MESSAGES
 // ============================================================
 
 async function loadMessages() {
 
-    if (!currentRoomId) {
+    if (
+        !currentRoomId ||
+        chatMode !== "real"
+    ) {
         return;
     }
 
@@ -498,10 +688,14 @@ function addMessage(
         text;
 
 
-    wrapper.appendChild(bubble);
+    wrapper.appendChild(
+        bubble
+    );
 
 
-    messagesBox.appendChild(wrapper);
+    messagesBox.appendChild(
+        wrapper
+    );
 
 
     messagesBox.scrollTop =
@@ -519,11 +713,20 @@ function subscribeToMessages() {
     unsubscribeRealtime();
 
 
+    if (
+        !currentRoomId ||
+        chatMode !== "real"
+    ) {
+        return;
+    }
+
+
     realtimeChannel =
         supabaseClient
 
             .channel(
-                "room-" + currentRoomId
+                "room-" +
+                currentRoomId
             )
 
             .on(
@@ -550,8 +753,7 @@ function subscribeToMessages() {
                         payload.new;
 
 
-                    // Ignore our own message because
-                    // we already display it instantly.
+                    // Ignore our own message.
 
                     if (
                         message.sender_id === userId
@@ -618,7 +820,29 @@ async function sendMessage() {
     }
 
 
-    if (!currentRoomId) {
+    // ========================================================
+    // AI MODE 🤖
+    // ========================================================
+
+    if (chatMode === "ai") {
+
+        await sendAiMessage(
+            text
+        );
+
+        return;
+
+    }
+
+
+    // ========================================================
+    // REAL PERSON MODE 👤
+    // ========================================================
+
+    if (
+        chatMode !== "real" ||
+        !currentRoomId
+    ) {
 
         alert(
             "You are not connected to anyone."
@@ -629,7 +853,18 @@ async function sendMessage() {
     }
 
 
-    // Disable button while sending.
+    await sendRealMessage(
+        text
+    );
+
+}
+
+
+// ============================================================
+// SEND REAL MESSAGE
+// ============================================================
+
+async function sendRealMessage(text) {
 
     sendBtn.disabled = true;
 
@@ -665,12 +900,8 @@ async function sendMessage() {
         }
 
 
-        // Clear input.
-
         messageInput.value = "";
 
-
-        // Display immediately.
 
         addMessage(
             data.message,
@@ -688,7 +919,10 @@ async function sendMessage() {
 
         alert(
             "Message could not be sent.\n\n" +
-            error.message
+            (
+                error.message ||
+                "Unknown error"
+            )
         );
 
     }
@@ -696,6 +930,196 @@ async function sendMessage() {
 
     sendBtn.disabled = false;
 
+
+    messageInput.focus();
+
+}
+
+
+// ============================================================
+// SEND AI MESSAGE
+// ============================================================
+
+async function sendAiMessage(text) {
+
+    if (isAiThinking) {
+        return;
+    }
+
+
+    isAiThinking = true;
+
+    sendBtn.disabled = true;
+
+
+    // Show user's message immediately.
+
+    addMessage(
+        text,
+        true
+    );
+
+
+    // Clear input immediately.
+
+    messageInput.value = "";
+
+
+    // Save user message in history.
+
+    aiMessages.push({
+
+        role: "user",
+
+        content: text
+
+    });
+
+
+    // Keep history small.
+
+    aiMessages =
+        aiMessages.slice(-12);
+
+
+    // --------------------------------------------------------
+    // Show typing message.
+    // --------------------------------------------------------
+
+    const typingWrapper =
+        document.createElement("div");
+
+
+    typingWrapper.className =
+        "message";
+
+
+    const typingBubble =
+        document.createElement("div");
+
+
+    typingBubble.className =
+        "bubble typing";
+
+
+    typingBubble.textContent =
+        "AI Companion is thinking...";
+
+
+    typingWrapper.appendChild(
+        typingBubble
+    );
+
+
+    messagesBox.appendChild(
+        typingWrapper
+    );
+
+
+    messagesBox.scrollTop =
+        messagesBox.scrollHeight;
+
+
+    try {
+
+        const response =
+            await fetch(
+                AI_WORKER_URL,
+                {
+
+                    method:
+                        "POST",
+
+                    headers: {
+
+                        "Content-Type":
+                            "application/json"
+
+                    },
+
+                    body:
+                        JSON.stringify({
+
+                            messages:
+                                aiMessages
+
+                        })
+
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        // Remove typing message.
+
+        typingWrapper.remove();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+
+                data.error ||
+                "AI request failed"
+
+            );
+
+        }
+
+
+        const aiResponse =
+            data.response ||
+            "Oops 😭 My brain had a tiny loading moment. Try again?";
+
+
+        // Show AI response.
+
+        addMessage(
+            aiResponse,
+            false
+        );
+
+
+        // Save AI response.
+
+        aiMessages.push({
+
+            role: "assistant",
+
+            content:
+                aiResponse
+
+        });
+
+
+        aiMessages =
+            aiMessages.slice(-12);
+
+
+    } catch (error) {
+
+        console.error(
+            "AI error:",
+            error
+        );
+
+
+        typingWrapper.remove();
+
+
+        addSystemMessage(
+            "😭 AI Companion is having a tiny brain break. Try again in a moment."
+        );
+
+    }
+
+
+    isAiThinking = false;
+
+    sendBtn.disabled = false;
 
     messageInput.focus();
 
@@ -740,21 +1164,39 @@ async function cancelSearch() {
 // NEXT STRANGER
 // ============================================================
 
-async function nextStranger() {
+   async function nextStranger() {
 
-    // Stop current realtime connection.
+    // Stop everything from the current chat.
+
+    cleanupChat();
+
+
+    // Start fresh real-person search.
+
+    await startSearching();
+
+}
+
+
+// ============================================================
+// CLEANUP CHAT
+// ============================================================
+
+function cleanupChat() {
+
+    // Stop searching timers.
+
+    stopSearch();
+
+
+    // Remove realtime connection.
 
     unsubscribeRealtime();
 
 
-    currentRoomId = null;
+    // Reset AI request state.
 
-    strangerId = null;
-
-
-    // Start completely fresh.
-
-    await startSearching();
+    isAiThinking = false;
 
 }
 
@@ -764,6 +1206,18 @@ async function nextStranger() {
 // ============================================================
 
 function reportStranger() {
+
+    if (chatMode === "ai") {
+
+        alert(
+            "😂 You can't report the AI Companion yet. " +
+            "If I'm annoying you, just press Next 🌚"
+        );
+
+        return;
+
+    }
+
 
     alert(
 
@@ -860,8 +1314,8 @@ window.addEventListener(
 
     () => {
 
-        unsubscribeRealtime();
+        cleanupChat();
 
     }
 
-);
+);         
